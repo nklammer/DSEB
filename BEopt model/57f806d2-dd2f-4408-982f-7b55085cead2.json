@@ -1,0 +1,228 @@
+{
+  "properties": {
+    "label": {
+      "valueType": "text"
+    },
+    "name": {
+      "valueType": "text"
+    },
+    "startdate": {
+      "valueType": "date"
+    },
+    "enddate": {
+      "valueType": "date"
+    },
+    "utility": {
+      "valueType": "text"
+    },
+    "sector": {
+      "valueType": "text"
+    },
+    "description": {
+      "valueType": "text"
+    },
+    "source": {
+      "valueType": "text"
+    },
+    "sourceparent": {
+      "valueType": "text"
+    },
+    "version": {
+      "valueType": "number"
+    },
+    "usenetmetering": {
+      "valueType": "text"
+    },
+    "peakkwcapacitymin": {
+      "valueType": "number"
+    },
+    "peakkwcapacitymax": {
+      "valueType": "number"
+    },
+    "peakkwcapacityhistory": {
+      "valueType": "number"
+    },
+    "peakkwhusagemin": {
+      "valueType": "number"
+    },
+    "peakkwhusagemax": {
+      "valueType": "number"
+    },
+    "peakkwhusagehistory": {
+      "valueType": "number"
+    },
+    "voltagecategory": {
+      "valueType": "text"
+    },
+    "phasewiring": {
+      "valueType": "text"
+    },
+    "voltageminimum": {
+      "valueType": "number"
+    },
+    "voltagemaximum": {
+      "valueType": "number"
+    },
+    "flatratebuy": {
+      "valueType": "number"
+    },
+    "flatratesell": {
+      "valueType": "number"
+    },
+    "flatratefueladj": {
+      "valueType": "number"
+    },
+    "fixedmonthlycharge": {
+      "valueType": "number"
+    },
+    "basicinformationcomments": {
+      "valueType": "text"
+    },
+    "flatdemandunit": {
+      "valueType": "text"
+    },
+    "demandrateunit": {
+      "valueType": "text"
+    },
+    "flatdemandmonth1": {
+      "valueType": "number"
+    },
+    "flatdemandmonth2": {
+      "valueType": "number"
+    },
+    "flatdemandmonth3": {
+      "valueType": "number"
+    },
+    "flatdemandmonth4": {
+      "valueType": "number"
+    },
+    "flatdemandmonth5": {
+      "valueType": "number"
+    },
+    "flatdemandmonth6": {
+      "valueType": "number"
+    },
+    "flatdemandmonth7": {
+      "valueType": "number"
+    },
+    "flatdemandmonth8": {
+      "valueType": "number"
+    },
+    "flatdemandmonth9": {
+      "valueType": "number"
+    },
+    "flatdemandmonth10": {
+      "valueType": "number"
+    },
+    "flatdemandmonth11": {
+      "valueType": "number"
+    },
+    "flatdemandmonth12": {
+      "valueType": "number"
+    },
+    "demandweekdayschedule": {
+      "valueType": "text"
+    },
+    "demandweekendschedule": {
+      "valueType": "text"
+    },
+    "demandreactivepowercharge": {
+      "valueType": "number"
+    },
+    "demandratchetpercentage": {
+      "valueType": "number"
+    },
+    "demandwindow": {
+      "valueType": "number"
+    },
+    "demandcomments": {
+      "valueType": "text"
+    },
+    "energyrateunit": {
+      "valueType": "text"
+    },
+    "energyweekdayschedule": {
+      "valueType": "text"
+    },
+    "energyweekendschedule": {
+      "valueType": "text"
+    },
+    "energycomments": {
+      "valueType": "text"
+    },
+    "supersedes": {
+      "valueType": "text"
+    },
+    "energyratestructure/period1/period": {
+      "valueType": "number"
+    },
+    "energyratestructure/period1/tier1adjustment": {
+      "valueType": "number"
+    },
+    "energyratestructure/period1/tier1rate": {
+      "valueType": "number"
+    },
+    "energyratestructure/period2/period": {
+      "valueType": "number"
+    },
+    "energyratestructure/period2/tier1adjustment": {
+      "valueType": "number"
+    },
+    "energyratestructure/period2/tier1rate": {
+      "valueType": "number"
+    },
+    "energyratestructure/period3/period": {
+      "valueType": "number"
+    },
+    "energyratestructure/period3/tier1adjustment": {
+      "valueType": "number"
+    },
+    "energyratestructure/period3/tier1rate": {
+      "valueType": "number"
+    }
+  },
+  "items": [
+    {
+      "label": "Data:57f806d2-dd2f-4408-982f-7b55085cead2",
+      "name": "RESIDENTIAL TIME-OF-USE SERVICE",
+      "startdate": "2012-07-01",
+      "utility": "Public Service Co of Colorado",
+      "sector": "Residential",
+      "description": "Applicable to residential service within the\nSmartGridCity program area. Not applicable to standby,\nauxiliary or resale service, including service customers\ntaking optional service under Schedule NM.",
+      "source": "http://www.xcelenergy.com/staticfiles/xe/Regulatory/Regulatory%20PDFs/psco_elec_entire_tariff.pdf",
+      "version": 1.5,
+      "usenetmetering": "false",
+      "fixedmonthlycharge": 7.778025,
+      "flatdemandunit": "kW",
+      "demandrateunit": "kW",
+      "flatdemandmonth1": 1,
+      "flatdemandmonth2": 1,
+      "flatdemandmonth3": 1,
+      "flatdemandmonth4": 1,
+      "flatdemandmonth5": 1,
+      "flatdemandmonth6": 1,
+      "flatdemandmonth7": 1,
+      "flatdemandmonth8": 1,
+      "flatdemandmonth9": 1,
+      "flatdemandmonth10": 1,
+      "flatdemandmonth11": 1,
+      "flatdemandmonth12": 1,
+      "demandweekdayschedule": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "demandweekendschedule": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "energyrateunit": "kWh",
+      "energyweekdayschedule": "111111111111112222221111111111111111112222221111111111111111112222221111111111111111112222221111111111111111112222221111111111111111113333331111111111111111113333331111111111111111113333331111111111111111113333331111111111111111112222221111111111111111112222221111111111111111112222221111",
+      "energyweekendschedule": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "uri": "http://en.openei.org/wiki/Data:57f806d2-dd2f-4408-982f-7b55085cead2",
+      "type": "Utility_Rates",
+      "energyratestructure/period1/period": 1,
+      "energyratestructure/period1/tier1adjustment": 0.04449367,
+      "energyratestructure/period1/tier1rate": 0.03942,
+      "energyratestructure/period2/period": 2,
+      "energyratestructure/period2/tier1adjustment": 0.04757622,
+      "energyratestructure/period2/tier1rate": 0.05966,
+      "energyratestructure/period3/period": 3,
+      "energyratestructure/period3/tier1adjustment": 0.06461097,
+      "energyratestructure/period3/tier1rate": 0.17151
+    }
+  ]
+}
