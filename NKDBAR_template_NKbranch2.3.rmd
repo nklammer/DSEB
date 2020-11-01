@@ -1,0 +1,623 @@
+---
+title: 'Team Project 1: DHW event prediction'
+author: "Danah Boabbas, Noah Klammer, and Austin Robinson"
+date: "11/05/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+<!-- For graphics changes to the knitting of the HTML document, see https://bookdown.org/yihui/bookdown/ sections 2.4, 3.1. and https://holtzy.github.io/Pimp-my-rmd/ -->
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE, echo = TRUE)
+# include necessary libraries
+library(tidyverse)
+library(knitr)
+library(caret)
+```
+
+
+## Step 1
+
+(1) **You are to first conduct an exploratory analysis using the R tool chain we have adopted (R, RStudio, R Markdown, ggplot2, …) of the hot water electricity use across the 40 apartments to characterize the variability of electricity use for hot water purposes using common representations such as carpet plots and time series box plots and to eventually develop a model of hot water related electricity use as a function of time of day and day type. Please be aware that this is data from real buildings with potential quality issues including missing data and outliers; thus, proper data quality check as described in the “Cleaning Data in R” is recommended.**
+
+<!-- Type ?knitr::knit and see 'Notes' section for information on working directories. -->
+
+<!-- Unzip all files incl. "Data Sample (Renamed Units).zip" and "BEopt Model.zip" and incl. all their subdirectories -->
+
+```{r Gregor2.0 directory and read_csv, message=FALSE, warning=FALSE}
+# The initial csv files containing the observations are loaded and compiled into clean, and usable dataframe objects. 
+
+
+# instantiate the data frame structure E_flats
+# read.csv => readr::read_csv automates POSIXct conversion
+# unzipped version
+E_flats <- read_csv("Data Sample (Renamed Units)/iUnit_Eliot_R_export_sample_data_201610_201612/iUnit_Eliot_R_export_sample_data_201610.csv")
+
+```
+
+```{r NK data quality data type check}
+spec(E_flats)
+```
+
+
+```{r use this for reading in structured directories of .csv data, message=FALSE}
+# compile a list of relevant files in the super directory
+# exclude .zip file from file name regex
+super.file.list <- list.files(path = "Data Sample (Renamed Units)", pattern = '^[^.]+$')
+
+# Compile a list of relevant files in the directory
+file.list <- list.files(path = "Data Sample (Renamed Units)/iUnit_Eliot_R_export_sample_data_201610_201612", pattern='*iUnit_Eliot_R_export_sample_data')
+
+# instantiate a matrix-like structure that for() loop can write to; remember to remove duplicate after
+E_flats <- E_flats[1,]
+
+
+# Compile single data set, E_flats, containing all files
+# exclude the first file in the list to avoid duplicate data
+for (i in 1:length(file.list))
+{
+  data <- read_csv(
+    paste("Data Sample (Renamed Units)/iUnit_Eliot_R_export_sample_data_201610_201612/", file.list[i], sep = "")
+    , col_types = cols(Time.Local.Text = col_datetime(format = ""))
+    )
+  E_flats <- unique(rbind(E_flats, data))
+}
+```
+
+
+```{r mutate df timestamp cols}
+library(lubridate)
+# Convert Epoch time to m/d/YYYY H:M format for use in carpet plot function
+E_flats$Time.Epoch <- format(as_datetime(E_flats$Time.Epoch), format = "%m/%d/%Y %H:%M", tz = "America/Denver")
+
+# Create a column of character values denoting the hour and minute of each observation
+E_flats$HourMin<- format(E_flats$Time.Local.Text, format = "%H:%M")
+
+# Create a new column of hour integers (for later filtering)
+E_flats$HourInt<- as.integer(format(E_flats$Time.Local.Text, format = "%H"))
+```
+
+```{r identify outliers and "medianImpute"}           
+# Remove outliers and impute missing values
+# These peak values could be the result of power surges or faulty readings
+# Any values higher than 0.5 kW can be removed from the plug load submetered data
+Outlier.indx <-  which(E_flats$UnitAnon21.Living.Plug.kW > 0.5)
+E_flats$UnitAnon21.Living.Plug.kW[Outlier.indx] <- NA
+
+# Impute NA values
+Impute.Plug <- preProcess(E_flats, method = "medianImpute")
+E_flats <- predict(Impute.Plug, newdata = E_flats)
+
+paste("Confirm NA values removed: ", sum(is.na(E_flats)), "NA terms")
+```
+
+```{r NK data quality: duplicate check}
+sum(duplicated(E_flats))
+```
+
+```{r NK data quality: missing data}
+library(visdat)
+# iterate by running code chunk; full data set is too large for vis_miss()
+visdat::vis_miss(E_flats[order(sample(1:nrow(E_flats),25000)), sample(1:ncol(E_flats),4)])
+```
+
+```{r create df Summarized and df Submeters from df E_flats}
+# Three different sets of the available data will be employed in the following analysis. These are the complete 
+# dataframe; `E_flats`, a subset of the Unit 21, submetered data; `Submeters`, and the complete data set converted 
+# to 15 minute interval maximum values; `Summarized`. 
+
+# Create an aggregated data frame of the maximum demand for every fifteen minute interval
+Summarized <- E_flats %>%
+  group_by(Time.Local.Text = cut(Time.Local.Text, breaks = "15 min")) %>%
+  summarise_all(funs(max))
+
+# Create a subset representing Unit 21 with submetered loads
+Submeters <- E_flats[,c(1,2,52,grep(pattern = "*UnitAnon21", x = colnames(E_flats)))]
+
+# Review data quality
+("E_flats glimpse: ")
+glimpse(E_flats)
+
+("Submeters glimpse: ")
+glimpse(Submeters)
+
+("Summarized glimpse:")
+glimpse(Summarized)
+
+# QA/QC check for NA values
+("NA sums within E_flats")
+(colSums(is.na(E_flats)))
+("NA sums within Submeters")
+(colSums(is.na(Submeters)))
+("NA sums within Summarised")
+(colSums(is.na(Summarized)))
+```
+
+```{r day types NK}
+# timeDate package knows the human significance of dates
+library(timeDate)
+
+# group by four day quadrants 00:XX to 5:XX, 6:XX to 11:XX, 12:XX to 17:XX, and 18:XX to 23:XX
+is.quad1 = (Summarized$HourInt < 6 & Summarized$HourInt >=0)
+is.quad2 = (Summarized$HourInt < 12 & Summarized$HourInt >=6)
+is.quad3 = (Summarized$HourInt < 18 & Summarized$HourInt >=12)
+is.quad4 = (Summarized$HourInt <= 23 & Summarized$HourInt >=18)
+
+# see timeDate documentation
+is.weekend <- isWeekend(Summarized$Time.Local.Text)
+
+# filter by weekends
+# Summarized[is.weekend, ]
+
+# filter by weekdays (is not weekend)
+# Summarized[!is.weekend, ]
+
+# filter by holidays
+
+# make custom holidays vec     listHolidays(pattern = ".*")
+us <- listHolidays(pattern = ".*US")
+# removes an Illinois-specific holiday
+us <- us[-grep(".*USCPulaskisBirthday", us)]
+relig_holidays <- c("ChristmasEve","ChristmasDay","NewYearsDay","Easter","EasterMonday")
+custom_holidays <- c(us,relig_holidays)
+
+# isHoliday() -- must be an timeDate S4 object
+is.holiday <- isHoliday(timeDate(Summarized$Time.Local.Text), holidays = holidayNYSE())
+
+# isBizday
+is.bizday <- isBizday(timeDate(Summarized$Time.Local.Text), holidays = holidayNYSE())
+
+# filter by holidays
+# Summarized[is.holiday, ]
+
+# filter by business days
+# Summarized[is.bizday, ]
+```
+
+Let's develop box plots for each unit within the Summarized data frame. Starting by turning the unit data within Summarized into a matrix for easy plotting: 
+
+```{r Turn Unit Data to Matrix and Boxplot That Matrix AAR}
+mat_summarized <- data.matrix(Summarized[,5:44])
+boxplot(mat_summarized)
+```
+
+Let's break it down into groups of ten so we can take a closer look:
+
+```{r First Ten Units Boxplot AAR}
+boxplot(Summarized$UnitAnon01.kW,
+        Summarized$UnitAnon02.kW,
+        Summarized$UnitAnon03.kW,
+        Summarized$UnitAnon04.kW,
+        Summarized$UnitAnon05.kW,
+        Summarized$UnitAnon06.kW,
+        Summarized$UnitAnon07.kW,
+        Summarized$UnitAnon08.kW,
+        Summarized$UnitAnon09.kW,
+        Summarized$UnitAnon10.kW)
+```
+
+```{r Units 11-20 Boxplots AAR}
+boxplot(Summarized$UnitAnon11.kW,
+        Summarized$UnitAnon12.kW,
+        Summarized$UnitAnon13.kW,
+        Summarized$UnitAnon14.kW,
+        Summarized$UnitAnon15.kW,
+        Summarized$UnitAnon16.kW,
+        Summarized$UnitAnon17.kW,
+        Summarized$UnitAnon18.kW,
+        Summarized$UnitAnon19.kW,
+        Summarized$UnitAnon20.kW)
+```
+
+```{r Units 21-30 Boxplots AAR}
+boxplot(Summarized$UnitAnon21.kW,
+        Summarized$UnitAnon22.kW,
+        Summarized$UnitAnon23.kW,
+        Summarized$UnitAnon24.kW,
+        Summarized$UnitAnon25.kW,
+        Summarized$UnitAnon26.kW,
+        Summarized$UnitAnon27.kW,
+        Summarized$UnitAnon28.kW,
+        Summarized$UnitAnon29.kW,
+        Summarized$UnitAnon30.kW)
+```
+
+```{r Units 31-40 Boxplots AAR}
+boxplot(Summarized$UnitAnon31.kW,
+        Summarized$UnitAnon32.kW,
+        Summarized$UnitAnon33.kW,
+        Summarized$UnitAnon34.kW,
+        Summarized$UnitAnon35.kW,
+        Summarized$UnitAnon36.kW,
+        Summarized$UnitAnon37.kW,
+        Summarized$UnitAnon38.kW,
+        Summarized$UnitAnon39.kW,
+        Summarized$UnitAnon40.kW)
+```
+
+Let's also view the normalized box-plots by normalizing each unit's data first. 
+
+```{r Normalized Boxplots AAR}
+UnitAnon01 <- Summarized$UnitAnon01.kW
+UnitAnon02 <- Summarized$UnitAnon02.kW
+UnitAnon03 <- Summarized$UnitAnon03.kW
+UnitAnon04 <- Summarized$UnitAnon04.kW
+UnitAnon05 <- Summarized$UnitAnon05.kW
+UnitAnon06 <- Summarized$UnitAnon06.kW
+UnitAnon07 <- Summarized$UnitAnon07.kW
+UnitAnon08 <- Summarized$UnitAnon08.kW
+UnitAnon09 <- Summarized$UnitAnon09.kW
+UnitAnon10 <- Summarized$UnitAnon10.kW
+UnitAnon11 <- Summarized$UnitAnon11.kW
+UnitAnon12 <- Summarized$UnitAnon12.kW
+UnitAnon13 <- Summarized$UnitAnon13.kW
+UnitAnon14 <- Summarized$UnitAnon14.kW
+UnitAnon15 <- Summarized$UnitAnon15.kW
+UnitAnon16 <- Summarized$UnitAnon16.kW
+UnitAnon17 <- Summarized$UnitAnon17.kW
+UnitAnon18 <- Summarized$UnitAnon18.kW
+UnitAnon19 <- Summarized$UnitAnon19.kW
+UnitAnon20 <- Summarized$UnitAnon20.kW
+UnitAnon21 <- Summarized$UnitAnon21.kW
+UnitAnon22 <- Summarized$UnitAnon22.kW
+UnitAnon23 <- Summarized$UnitAnon23.kW
+UnitAnon24 <- Summarized$UnitAnon24.kW
+UnitAnon25 <- Summarized$UnitAnon25.kW
+UnitAnon26 <- Summarized$UnitAnon26.kW
+UnitAnon27 <- Summarized$UnitAnon27.kW
+UnitAnon28 <- Summarized$UnitAnon28.kW
+UnitAnon29 <- Summarized$UnitAnon29.kW
+UnitAnon30 <- Summarized$UnitAnon30.kW
+UnitAnon31 <- Summarized$UnitAnon31.kW
+UnitAnon32 <- Summarized$UnitAnon32.kW
+UnitAnon33 <- Summarized$UnitAnon33.kW
+UnitAnon34 <- Summarized$UnitAnon34.kW
+UnitAnon35 <- Summarized$UnitAnon35.kW
+UnitAnon36 <- Summarized$UnitAnon36.kW
+UnitAnon37 <- Summarized$UnitAnon37.kW
+UnitAnon38 <- Summarized$UnitAnon38.kW
+UnitAnon39 <- Summarized$UnitAnon39.kW
+UnitAnon40 <- Summarized$UnitAnon40.kW
+
+UnitAnon01_norm <- rnorm(35036,mean=mean(UnitAnon01, na.rm=TRUE), sd=sd(UnitAnon01, na.rm=TRUE))
+UnitAnon02_norm <- rnorm(35036,mean=mean(UnitAnon02, na.rm=TRUE), sd=sd(UnitAnon02, na.rm=TRUE))
+UnitAnon03_norm <- rnorm(35036,mean=mean(UnitAnon03, na.rm=TRUE), sd=sd(UnitAnon03, na.rm=TRUE))
+UnitAnon04_norm <- rnorm(35036,mean=mean(UnitAnon04, na.rm=TRUE), sd=sd(UnitAnon04, na.rm=TRUE))
+UnitAnon05_norm <- rnorm(35036,mean=mean(UnitAnon05, na.rm=TRUE), sd=sd(UnitAnon05, na.rm=TRUE))
+UnitAnon06_norm <- rnorm(35036,mean=mean(UnitAnon06, na.rm=TRUE), sd=sd(UnitAnon06, na.rm=TRUE))
+UnitAnon07_norm <- rnorm(35036,mean=mean(UnitAnon07, na.rm=TRUE), sd=sd(UnitAnon07, na.rm=TRUE))
+UnitAnon08_norm <- rnorm(35036,mean=mean(UnitAnon08, na.rm=TRUE), sd=sd(UnitAnon08, na.rm=TRUE))
+UnitAnon09_norm <- rnorm(35036,mean=mean(UnitAnon09, na.rm=TRUE), sd=sd(UnitAnon09, na.rm=TRUE))
+UnitAnon10_norm <- rnorm(35036,mean=mean(UnitAnon10, na.rm=TRUE), sd=sd(UnitAnon10, na.rm=TRUE))
+UnitAnon11_norm <- rnorm(35036,mean=mean(UnitAnon11, na.rm=TRUE), sd=sd(UnitAnon11, na.rm=TRUE))
+UnitAnon12_norm <- rnorm(35036,mean=mean(UnitAnon12, na.rm=TRUE), sd=sd(UnitAnon12, na.rm=TRUE))
+UnitAnon13_norm <- rnorm(35036,mean=mean(UnitAnon13, na.rm=TRUE), sd=sd(UnitAnon13, na.rm=TRUE))
+UnitAnon14_norm <- rnorm(35036,mean=mean(UnitAnon14, na.rm=TRUE), sd=sd(UnitAnon14, na.rm=TRUE))
+UnitAnon15_norm <- rnorm(35036,mean=mean(UnitAnon15, na.rm=TRUE), sd=sd(UnitAnon15, na.rm=TRUE))
+UnitAnon16_norm <- rnorm(35036,mean=mean(UnitAnon16, na.rm=TRUE), sd=sd(UnitAnon16, na.rm=TRUE))
+UnitAnon17_norm <- rnorm(35036,mean=mean(UnitAnon17, na.rm=TRUE), sd=sd(UnitAnon17, na.rm=TRUE))
+UnitAnon18_norm <- rnorm(35036,mean=mean(UnitAnon18, na.rm=TRUE), sd=sd(UnitAnon18, na.rm=TRUE))
+UnitAnon19_norm <- rnorm(35036,mean=mean(UnitAnon19, na.rm=TRUE), sd=sd(UnitAnon19, na.rm=TRUE))
+UnitAnon20_norm <- rnorm(35036,mean=mean(UnitAnon20, na.rm=TRUE), sd=sd(UnitAnon20, na.rm=TRUE))
+UnitAnon21_norm <- rnorm(35036,mean=mean(UnitAnon21, na.rm=TRUE), sd=sd(UnitAnon21, na.rm=TRUE))
+UnitAnon22_norm <- rnorm(35036,mean=mean(UnitAnon22, na.rm=TRUE), sd=sd(UnitAnon22, na.rm=TRUE))
+UnitAnon23_norm <- rnorm(35036,mean=mean(UnitAnon23, na.rm=TRUE), sd=sd(UnitAnon23, na.rm=TRUE))
+UnitAnon24_norm <- rnorm(35036,mean=mean(UnitAnon24, na.rm=TRUE), sd=sd(UnitAnon24, na.rm=TRUE))
+UnitAnon25_norm <- rnorm(35036,mean=mean(UnitAnon25, na.rm=TRUE), sd=sd(UnitAnon25, na.rm=TRUE))
+UnitAnon26_norm <- rnorm(35036,mean=mean(UnitAnon26, na.rm=TRUE), sd=sd(UnitAnon26, na.rm=TRUE))
+UnitAnon27_norm <- rnorm(35036,mean=mean(UnitAnon27, na.rm=TRUE), sd=sd(UnitAnon27, na.rm=TRUE))
+UnitAnon28_norm <- rnorm(35036,mean=mean(UnitAnon28, na.rm=TRUE), sd=sd(UnitAnon28, na.rm=TRUE))
+UnitAnon29_norm <- rnorm(35036,mean=mean(UnitAnon29, na.rm=TRUE), sd=sd(UnitAnon29, na.rm=TRUE))
+UnitAnon30_norm <- rnorm(35036,mean=mean(UnitAnon30, na.rm=TRUE), sd=sd(UnitAnon30, na.rm=TRUE))
+UnitAnon31_norm <- rnorm(35036,mean=mean(UnitAnon31, na.rm=TRUE), sd=sd(UnitAnon31, na.rm=TRUE))
+UnitAnon32_norm <- rnorm(35036,mean=mean(UnitAnon32, na.rm=TRUE), sd=sd(UnitAnon32, na.rm=TRUE))
+UnitAnon33_norm <- rnorm(35036,mean=mean(UnitAnon33, na.rm=TRUE), sd=sd(UnitAnon33, na.rm=TRUE))
+UnitAnon34_norm <- rnorm(35036,mean=mean(UnitAnon34, na.rm=TRUE), sd=sd(UnitAnon34, na.rm=TRUE))
+UnitAnon35_norm <- rnorm(35036,mean=mean(UnitAnon35, na.rm=TRUE), sd=sd(UnitAnon35, na.rm=TRUE))
+UnitAnon36_norm <- rnorm(35036,mean=mean(UnitAnon36, na.rm=TRUE), sd=sd(UnitAnon36, na.rm=TRUE))
+UnitAnon37_norm <- rnorm(35036,mean=mean(UnitAnon37, na.rm=TRUE), sd=sd(UnitAnon37, na.rm=TRUE))
+UnitAnon38_norm <- rnorm(35036,mean=mean(UnitAnon38, na.rm=TRUE), sd=sd(UnitAnon38, na.rm=TRUE))
+UnitAnon39_norm <- rnorm(35036,mean=mean(UnitAnon39, na.rm=TRUE), sd=sd(UnitAnon39, na.rm=TRUE))
+UnitAnon40_norm <- rnorm(35036,mean=mean(UnitAnon40, na.rm=TRUE), sd=sd(UnitAnon40, na.rm=TRUE))
+
+boxplot(UnitAnon01_norm, 
+        UnitAnon02_norm, 
+        UnitAnon03_norm, 
+        UnitAnon04_norm,
+        UnitAnon05_norm,
+        UnitAnon06_norm,
+        UnitAnon07_norm,
+        UnitAnon08_norm,
+        UnitAnon09_norm,
+        UnitAnon10_norm,
+        UnitAnon11_norm, 
+        UnitAnon12_norm, 
+        UnitAnon13_norm, 
+        UnitAnon14_norm,
+        UnitAnon15_norm,
+        UnitAnon16_norm,
+        UnitAnon17_norm,
+        UnitAnon18_norm,
+        UnitAnon19_norm,
+        UnitAnon20_norm,
+        UnitAnon21_norm, 
+        UnitAnon22_norm, 
+        UnitAnon23_norm, 
+        UnitAnon24_norm,
+        UnitAnon25_norm,
+        UnitAnon26_norm,
+        UnitAnon27_norm,
+        UnitAnon28_norm,
+        UnitAnon29_norm,
+        UnitAnon30_norm,
+        UnitAnon31_norm, 
+        UnitAnon32_norm, 
+        UnitAnon33_norm, 
+        UnitAnon34_norm,
+        UnitAnon35_norm,
+        UnitAnon36_norm,
+        UnitAnon37_norm,
+        UnitAnon38_norm,
+        UnitAnon39_norm,
+        UnitAnon40_norm)
+```
+
+Let's take a look at a generic heatmap of the data...
+
+```{r Heatmap of the Summarized Matrix AAR}
+heatmap(mat_summarized)
+```
+
+Now, finally, lets develop carpet plots for each unit  to see if there are any 'hotspots' where the energy usage is high. Namely, this should identify times when the shower is being operated in each unit. Assuming they shower at all! 
+
+```{r Carpet Plot Function Provided by Dr. Henze}
+carpet.plot <- function(from, to, data, cs){
+   # Select time frame specified with "from" and "to"
+  if(length(grep(" 00:00",from)) != 1) {
+			print("selected start time doesn't begin at 00:00 o'clock")
+			}else{
+			
+	if(length(grep(" 23:59",to)) != 1) {
+			print("selected end time doesn't stop at 23:00 o'clock")
+			}else{
+    data <- data[c(grep(from,(data[,1])):grep(to,(data[,1]))),]
+	
+	# Extract the time format
+	d <- strptime(data[,1], "%m/%d/%Y %H:%M")
+	day_stamp <- format(d, "%Y.%m.%d")
+	n <- length(cs)
+	
+	# Extract the amount of days 
+	t <- unique(day_stamp)
+	days <- NROW(t)
+  
+	
+	# Hour:Minute tick labels
+	hr_mn <- seq(from=0,to=24,by=1)
+	names(hr_mn) <- c("00:00","01:00","02:00","03:00","04:00","05:00","06:00","07:00","08:00","09:00","10:00","11:00","12:00"   ,"13:00","14:00","15:00","16:00","17:00","18:00","19:00","20:00","21:00","22:00","23:00","23:59")
+	
+	# Extract days as POSIXct format, is x-axis
+	t.1 <- strptime(t,"%Y.%m.%d")
+	x <- as.POSIXct(t.1)
+
+	# b is amount of tick marks on x-axis
+	b <- days/11
+  
+	# Make color platte
+	self.colors <- colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan",
+  			"#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000"))
+	
+	# Loading necessary packages
+	library(lattice)
+	library(grid)
+
+	# Specifiying graphics device parameters if more than one graph per page
+	grid.newpage()
+	pushViewport(viewport(layout = grid.layout(n,1)))
+
+	# Creating Matrix M for plotting, n is amount of columns specified with cs()
+	for(i in 1:n){
+	M <- t(array(data[,cs[i]], dim=c(1440,days)))	
+
+	# Specifiying position of graph if more than one plot per page
+	pushViewport(viewport(layout.pos.col=1, layout.pos.row=i)) 
+
+	# Actual graph command including color scheme, x-axis, labels
+	print(levelplot(M,row.values = x,  aspect="fill",contour=F, region=T, 
+		col.regions= self.colors(20), xlab= names(data)[cs[i]],
+		ylab="Minute Time", 
+		scales=list(x=list(at = seq(min(x), max(x), by = paste(round(b,0),"day", sep =" ")), format="%d.%b"),
+		            y=list(at = seq(0, 1440, by = 60), labels = names(hr_mn))
+		)),
+		newpage = F) 
+
+	# Lifting Viewport 1 level up, necessary for subsequent graphs
+	popViewport(1)	
+	}
+	popViewport()
+}}}
+```
+
+```{r Carpet Plots for each unit ONLY FOR WHOLE DATA AAR}
+#this code will only work when we use the whole data set
+
+from <-"10/01/2016 00:00"
+to <- "09/30/2017 23:59"
+
+## Create carpet plots using the above function 
+## Column 6 is the first unit, hence why cs is 6 in the first call
+
+carpet.plot(from, to, E_flats, 6)
+carpet.plot(from, to, E_flats, 7)
+carpet.plot(from, to, E_flats, 8)
+carpet.plot(from, to, E_flats, 9)
+carpet.plot(from, to, E_flats, 10)
+
+carpet.plot(from, to, E_flats, 11)
+carpet.plot(from, to, E_flats, 12)
+carpet.plot(from, to, E_flats, 13)
+carpet.plot(from, to, E_flats, 14)
+carpet.plot(from, to, E_flats, 15)
+carpet.plot(from, to, E_flats, 16)
+carpet.plot(from, to, E_flats, 17)
+carpet.plot(from, to, E_flats, 18)
+carpet.plot(from, to, E_flats, 19)
+
+carpet.plot(from, to, E_flats, 20)
+carpet.plot(from, to, E_flats, 21)
+carpet.plot(from, to, E_flats, 22)
+carpet.plot(from, to, E_flats, 23)
+carpet.plot(from, to, E_flats, 24)
+carpet.plot(from, to, E_flats, 25)
+carpet.plot(from, to, E_flats, 26)
+carpet.plot(from, to, E_flats, 27)
+carpet.plot(from, to, E_flats, 28)
+carpet.plot(from, to, E_flats, 29)
+
+carpet.plot(from, to, E_flats, 30)
+carpet.plot(from, to, E_flats, 31)
+carpet.plot(from, to, E_flats, 32)
+carpet.plot(from, to, E_flats, 33)
+carpet.plot(from, to, E_flats, 34)
+carpet.plot(from, to, E_flats, 35)
+carpet.plot(from, to, E_flats, 36)
+carpet.plot(from, to, E_flats, 37)
+carpet.plot(from, to, E_flats, 38)
+carpet.plot(from, to, E_flats, 39)
+
+carpet.plot(from, to, E_flats, 40)
+carpet.plot(from, to, E_flats, 41)
+carpet.plot(from, to, E_flats, 42)
+carpet.plot(from, to, E_flats, 44)
+carpet.plot(from, to, E_flats, 45)
+```
+
+(2) **Based on the DHW heater characteristics gleaned from the one submetered apartment, develop rules and methods to extract the roughly 3.5 kW DHW events from the other apartments, which are not submetered. You should yield a minute-by-minute time series of binary DHW activity. From that you know the electricity consumed for hot water for every minute, hour, and day, allowing you aggregate across multiple time scales. Please note that you can convert electricity use for DHW into gallons or liters of DHW by assuming a reasonable mains water temperature (10-12°C) and tank temperature (50-55°C).**
+Understand the DHW heater characteristics from the submetered unit 21. There is a strong correlation between the total kW and water heater loads fir unit 21. 
+```{r}
+library(corrplot)
+corrMat<-cor(Submeters[4:11])
+corrplot(corrMat,method='ellipse')
+# since there is a strong correlation between total kW and water heater, plot water heater to see its trend over time
+attach(Submeters)
+plot(UnitAnon21.Water.Heater.kW)
+# check how unit21.total.kw and unit21.kw variables differ 
+mean(Submeters$UnitAnon21.kW)>mean(Submeters$UnitAnon21.Total.kW)
+```
+Aggregate the data at different time scales. 
+```{r}
+# Create an aggregated data frame of the maximum Submetered demand for every fifteen minute interval
+Submeters.15.mins <- Submeters %>%
+  group_by(Time.Local.Text = cut(Time.Local.Text, breaks = "15 min")) %>%
+  summarise_all(funs(max))
+# Create an aggregated data frame of the maximum Submetered demand for every one hour interval
+Submeters.1.hr <- Submeters %>%
+  group_by(Time.Local.Text = cut(Time.Local.Text, breaks = "1 h")) %>%
+  summarise_all(funs(max))
+# Create an aggregated data frame of the maximum Submetered demand for every twenty-four hours interval
+Submeters.24.hr <- Submeters %>%
+  group_by(Time.Local.Text = cut(Time.Local.Text, breaks = "24 h")) %>%
+  summarise_all(funs(max))
+```
+Now, we can plot the water heater to see its trends. 
+```{r}
+# trying to plot the data with 15 minutes time interval 
+attach(Submeters.15.mins)
+plot(UnitAnon21.Water.Heater.kW,main="Trends of Water heater consumption on 15 minutes time interval data")
+# trying to plot the data with 1 hour time interval 
+attach(Submeters.1.hr)
+plot(UnitAnon21.Water.Heater.kW,main="Trends of Water heater consumption on one hour time interval data")
+# trying to plot the data with 24 hours time interval 
+attach(Submeters.24.hr)
+plot(UnitAnon21.Water.Heater.kW,main="Trends of Water heater consumption on 24 hours time interval data")
+```
+```{r}
+# trying to plot the total kW of unit 21 data with 15 minutes time interval 
+attach(Submeters.15.mins)
+plot(UnitAnon21.Total.kW,main="Trends of total kW on 15 minutes time interval data",type="l")
+# trying to plot the data with 1 hour time interval 
+attach(Submeters.1.hr)
+plot(UnitAnon21.Total.kW,col="red",main="Trends of unit 21 events based on one hour time interval data",type="l")
+points(UnitAnon21.Water.Heater.kW, pch = 20,col="blue")
+points(UnitAnon21.Washer.kW,pch = 20,col="yellow")
+points(UnitAnon21.Dryer.kW,pch = 20,col="pink")
+points(UnitAnon21.Range.kW,pch = 20,col="green")
+points(UnitAnon21.PTAC.kW,pch = 20,col="black")
+points(UnitAnon21.Living.Plug.kW,pch = 20,color="grey")
+legend(x="topright",pch=c(20,20,20),col=c("red","blue","yellow","pink","green","black","grey"),legend=c("Total.kW", "Washer.kW", "Dryer.kW", "Range.kW", "PTAC.kW", "Living.Plug.kW"))
+# trying to plot the data with 24 hours time interval 
+attach(Submeters.24.hr)
+plot(UnitAnon21.Total.kW,pch = 20,col="red",type="l",main="Trends of unit 21 events based on 24 hours time interval data")
+points(UnitAnon21.Water.Heater.kW, pch = 20,col="blue")
+points(UnitAnon21.Washer.kW,pch = 20,col="yellow")
+points(UnitAnon21.Dryer.kW,pch = 20,col="pink")
+points(UnitAnon21.Range.kW,pch = 20,col="green")
+points(UnitAnon21.PTAC.kW,pch = 20,col="black")
+points(UnitAnon21.Living.Plug.kW,pch = 20,color="grey")
+legend(x="topright",pch=c(20,20,20),col=c("red","blue","yellow","pink","green","black","grey"),legend=c("Total.kW", "Washer.kW", "Dryer.kW", "Range.kW", "PTAC.kW", "Living.Plug.kW"))
+```
+Yield a minute-by-minute time series of binary DHW activity.
+```{r}
+# create a new vector to yield a minute-by-minute time series of binary DHW activity.(0="OFF',1="ON")
+Submeters$binary.DHW <- ifelse(Submeters$UnitAnon21.Water.Heater.kW >= 0 , 1, 0)
+# create a new vector to yield a 15 minutes time series of binary DHW activity.
+Submeters.15.mins$binary.DHW <- ifelse(Submeters.15.mins$UnitAnon21.Water.Heater.kW >= 0 , 1, 0)
+# create a new vector to yield a 1 hour time series of binary DHW activity.
+Submeters.1.hr$binary.DHW <- ifelse(Submeters.1.hr$UnitAnon21.Water.Heater.kW >= 0 , 1, 0)
+# create a new vector to yield a 24 hours time series of binary DHW activity.
+Submeters.24.hr$binary.DHW <- ifelse(Submeters.24.hr$UnitAnon21.Water.Heater.kW >= 0 , 1, 0)
+```
+Now, understand what's happening when the water heater is either on or off 
+```{r}
+# extracting the submetered data when the DHW is ON (=1)
+Submeters.ON.DHW <- Submeters %>%
+  filter(binary.DHW==1) #7189 observations
+# extracting the submeters data when the DHW is OFF (=0)
+Submeters.OFF.DHW <- Submeters %>%
+  filter(binary.DHW == 0) #125,351 obs from the minute by minute data 
+```
+
+```{r}
+# develop box plots for the submetered events of unit 21 when the DHW is on 
+boxplot(Submeters.ON.DHW$UnitAnon21.Total.kW,
+        Submeters.ON.DHW$UnitAnon21.PTAC.kW,
+        Submeters.ON.DHW$UnitAnon21.Water.Heater.kW,
+        Submeters.ON.DHW$UnitAnon21.Washer.kW,
+        Submeters.ON.DHW$UnitAnon21.Dryer.kW,
+        Submeters.ON.DHW$UnitAnon21.Range.kW, 
+        Submeters.ON.DHW$UnitAnon21.Living.Plug.kW)
+
+# see the trends of AC consumption when the DHW is on 
+plot(Submeters.ON.DHW$UnitAnon21.PTAC.kW,col="blue",main="Trends of AC consumption when DHW is ON")
+
+# see the trends of AC consumption when the DHW is off
+plot(Submeters.OFF.DHW$UnitAnon21.PTAC.kW,col="red",main="Trends of AC consumption when DHW is OFF")
+# people will likely turn the AC on when they're not taking showers and will turn it off when they are taking showers. Thus, it was expected to see those trends of AC consumption. 
+```
+Now, we can develop rules and models based on unit 21 events, to be used for the rest of 39 units. 
+```{r}
+```
+
+use different method to fit a model and then predict the events for the rest of 39 units 
+
+I made this table to illustrate how to interpret a confusion matrix.
+
+---           | True No (0)            | True Yes (1)            | Total
+--------------|------------------------|-------------------------|----
+Predicted No  | *Number successful*    | *Number false negative* | Total predicted No
+Predicted Yes | *Number false positive* | *Number successful*     | Total predicted Yes
+Total         | Total true No          | Total true Yes          | Total observations
+
+
+(3) **A background report (https://www.nrel.gov/docs/fy10osti/47685.pdf) describes the modeling approach adopted in BEopt. Read the 11-page report in order to understand the BEopt DHW input schedule assumptions used below.**
+
+> Block quote
+
+(4) **You are to compare the variability in DHW electricity use observed in a) the BEopt model adopted for the iUnit project (https://beopt.nrel.gov, iUnit model provided on D2L) with b) the measured iUnit Eliot development data. The BEopt model includes hourly output for the as-built model (1_Hourly.csv) and the 15-minute hot water schedules (DHW_1bed_unit0_15min.csv) used by BEopt for estimating draw variability across the apartments.**
+
+
+
+<!-- Don't mess with the below code. -->
+<br><br><br><br>
